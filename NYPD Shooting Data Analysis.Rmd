@@ -1,0 +1,314 @@
+---
+title: "My NYPD Shooting Incident Data Report"
+author: "Y. Habib"
+date: "2023-12-11"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(leaflet)
+library(leaflet.extras)
+library(dplyr)
+library(ggplot2)
+library(tidyr)
+library(lubridate)
+library(forecast)
+```
+
+
+```{r Importing_and_Cleaning_Data}
+
+url <- "https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv?accessType=DOWNLOAD"
+NYPDData <- read.csv(url)
+
+summary(NYPDData)
+
+NYPDShootingData <- NYPDData
+
+#transforming date from <chr> to <date>
+NYPDShootingData$OCCUR_DATE <- as.Date(NYPDShootingData$OCCUR_DATE, format = "%m/%d/%Y")
+
+print(head(NYPDShootingData))
+
+
+#Checking to see if there are columns with empty cells
+empty_cells_per_column <- colSums(NYPDShootingData == "")
+print(empty_cells_per_column)
+
+```
+A large number of location description cells are empty which raises the following question:
+Is there a discernible pattern in the allocation of resources for shooting investigations
+resulting in the lack of documentation?
+
+Missing data can potentially indicate bias...
+
+General possible sources of bias:
+
+- Bias by law enforcement such as racial profiling
+
+- Bias from missing data 
+
+- Bias from different practices in different Boroughs (possibly economic disparities)
+
+- Bias from what economic indicators I chose to use...maybe if I used different indicators
+  I would make different observations
+
+Since there is a large number of shootings with missing cells, they will be kept in the
+data set BUT the missing data will be further investigated based off the question above
+at the end of the document.
+
+
+
+
+
+
+Question: Are there certain locations that have a higher frequency of incidents?
+
+
+```{r Further_Cleaning_Data}
+
+#Removing all columns that serve no purpose in answering the question above
+NYPDShootingData <- NYPDShootingData %>% select(-INCIDENT_KEY, -STATISTICAL_MURDER_FLAG, 
+                                                -PERP_AGE_GROUP, -PERP_SEX, -PERP_RACE, 
+                                                -VIC_AGE_GROUP, -VIC_SEX, -VIC_RACE)
+
+print(head(NYPDShootingData))
+
+```
+
+
+```{r Data_Visualization}
+
+#Using bar graphs for better distiction of the different boroughs:
+ggplot(NYPDShootingData, aes(x = BORO)) +
+  geom_bar(fill = "skyblue", color = "black") +
+  labs(title = "Distribution of Shooting Incidents across Neighborhoods",
+       x = "Neighborhood",
+       y = "Number of Incidents") +
+  theme_minimal()
+
+```
+
+...
+
+Questions Raised:
+
+1.) Has there been a change in the distribution of shootings across various boroughs 
+    over the years?
+    
+2.) How has number of shootings changed over the years
+
+...
+
+Distribution of Shootings Across Boroughs:
+
+
+```{r Dist_of_Shootings_Across_Boroughs}
+
+NYPDShootingData$Year <- year(NYPDShootingData$OCCUR_DATE)
+
+# Group by year and borough
+shooting_by_year <- NYPDShootingData %>%
+  group_by(Year, BORO) %>%
+  summarise(Incidents = n())
+
+# Create a line chart
+ggplot(shooting_by_year, aes(x = Year, y = Incidents, color = BORO)) +
+  geom_line() +
+  labs(title = "Distribution of Shootings Across Boroughs Over Years",
+       x = "Year",
+       y = "Number of Incidents",
+       color = "Neighborhood") +
+  theme_minimal()
+
+```
+
+Observation 1: The poorer boroughs of NY consistently have a higher number of incidents
+than the richer boroughs
+
+~This can potentially simply be because of population density~
+
+Further investigation needed to confirm...
+
+Observation 2: Number of incidents in each borough have similar trends (generally
+decreasing until 2020 when a large spike in incidents is seen)
+
+...
+
+Number of Overall Shootings per Year:
+
+``` {r Number_of_Shootings_per_Year}
+
+shootings_per_year <- NYPDShootingData %>%
+  group_by(Year) %>%
+  summarise(Incidents = n())
+
+print(shootings_per_year)
+
+ggplot(shootings_per_year, aes(x = Year, y = Incidents)) +
+  geom_line() +
+  labs(title = "Number of Shootings Per Year",
+       x = "Year",
+       y = "Number of Incidents") +
+  theme_minimal()
+
+```
+
+Observation: Total number of incidents follows the same trend observed in individual
+boroughs (generally decreasing, large spike in 2020)
+
+Question Raised:
+- Does the number of shootings exhibit dependence on economic conditions?
+
+No single indicator can fully capture the complexity of the economy, after some research,
+two indicators will be used: inflation rate, and unemployment rate.
+
+...
+
+Inflation Rate:
+
+```{r Shootings_and_Economy_Inflation_Rates}
+
+#https://fred.stlouisfed.org/series/FEDFUNDS
+USInflationRates <- read.csv("~/Desktop/united-states-inflation-rate-cpi.csv", skip = 16, header = TRUE)
+
+#Removing empty "X" column
+USInflationRates <- USInflationRates %>% select(-X)
+
+#Changing date column to date format
+USInflationRates$date <- as.Date(USInflationRates$date, format = "%Y-%m-%d")
+
+#Removing all dates that are before 2006-01-01 since that is the beginning of the shooting data
+USInflationRates <- USInflationRates %>%
+  filter(date >= as.Date("2006-01-01"))
+
+#Creating a new column of the year
+USInflationRates$Year <- year(USInflationRates$date)
+
+print(head(USInflationRates))
+
+#Create a graph of Inflation rate over the years
+ggplot(USInflationRates, aes(x = Year, y = Inflation.Rate....)) +
+  geom_line() +
+  labs(title = "Inflation Rate per Year",
+       x = "Year",
+       y = "Inflation Rate") +
+  theme_minimal()
+
+```
+
+Inflation rate spikes at 2021
+
+...
+
+Unemployment Rate:
+
+```{r Shootings_and_Economy_Unemployment_Rates}
+
+#https://fred.stlouisfed.org/series/UNRATE
+USUnemploymentRates <- read.csv("~/Desktop/UNRATE.csv")
+
+#Changing date column to date format
+USUnemploymentRates$DATE <- as.Date(USUnemploymentRates$DATE, format = "%Y-%m-%d")
+
+#Removing all dates before 2006-01-01 since that is the beginning of the shooting data
+USUnemploymentRates <- USUnemploymentRates %>%
+  filter(DATE >= as.Date("2006-01-01"))
+
+print(head(USUnemploymentRates))
+
+ggplot(USUnemploymentRates, aes(x = DATE, y = UNRATE)) +
+  geom_line() +
+  labs(title = "Unemployment Rate per Year",
+       x = "Year",
+       y = "Unemployment Rate") +
+  theme_minimal()
+
+```
+
+General downwards trend but with two spikes seen around 2008 and 2020
+
+
+Conclusion: There seems to be a trend between the wealth in the region and the number
+of shooting incidents, specifically the wealthier the borough, the less shooting incidents
+occur there. There also seems to be a trend in how the US economy is doing and the 
+shooting incident rate which leads me to conclude that the better off an area is 
+financially, the less shootings there will be. 
+Further research is needed to make a more solid and evidence based conclusion but with 
+the limited knowledge I have now, this was the best I can do.
+
+...
+
+MODELING:
+
+Predicting what shooting incidents will look like in the future...
+
+
+```{r Modeling}
+
+monthly_counts <- NYPDShootingData %>%
+  filter(!is.na(OCCUR_DATE)) %>%
+  group_by(year_month = format(OCCUR_DATE, "%Y-%m")) %>%
+  summarize(Number_of_Incidents = n())
+
+shooting_time_series <- ts(monthly_counts$Number_of_Incidents, frequency = 12, start = c(as.numeric(substr(monthly_counts$year_month[1], 1, 4)), as.numeric(substr(monthly_counts$year_month[1], 6, 7))))
+
+shooting_forecast <- forecast(auto.arima(shooting_time_series), h = 12)
+
+autoplot(shooting_forecast) + ggtitle("Monthly Shooting Incidents Forecast")
+
+```
+
+This prediction model predicts that incidents will continue to spike and dip. This 
+analysis does not take into consideration economic predictions. Further analysis is 
+required to better the model but with the limited knowledge we have now, this was the 
+best I can do.
+
+...
+
+ANALYZING MISSING DATA:
+
+```{r Missing_Data}
+
+#New table with only rows that contain missing cells
+NYPDDataWithMissing <- NYPDData[rowSums(NYPDData == "") > 0, ]
+
+#New table that counts the number of shootings in each Borough
+Missing_Shooting_Summary <- NYPDDataWithMissing %>%
+  group_by(BORO) %>%
+  summarise(Shootings = n())
+
+Missing_Shooting_Summary <- Missing_Shooting_Summary %>%
+  rename(Shootings_with_Missing = Shootings)
+
+print(Missing_Shooting_Summary)
+
+
+#Looking at the proportion of shootings in each borough that is incomplete:
+Shooting_Summary <- NYPDData %>%
+  group_by(BORO) %>%
+  summarise(Shootings = n())
+
+print(Shooting_Summary)
+
+Merged_Shooting_Summary <- merge(Missing_Shooting_Summary, Shooting_Summary, by = "BORO", all.x = FALSE, all.y = FALSE)
+
+Merged_Shooting_Summary$Prop_of_Missing <- Merged_Shooting_Summary$Shootings_with_Missing / Merged_Shooting_Summary$Shootings
+
+```
+
+
+Based off this analysis, Manhattan, which is a wealthier borough than all the rest, 
+has a lower proportion of shootings with missing cells. This can potentially be a 
+source of bias such as racial profiling or such as racial profiling or bias from 
+different practices in different Boroughs possibly coming from economic disparities.
+Further research and analysis is necessary...
+
+Next steps possibly include running an analysis to see if the difference is statistically
+significant.
+
+
